@@ -11,9 +11,11 @@ describe("MultiSigRoleManager security regressions", function () {
     const initData = factory.interface.encodeFunctionData("initialize", [
       adminAddress ?? admin.address,
     ]);
-    const proxyFactory = await ethers.getContractFactory("ERC1967Proxy");
+    const [, proxyAdmin] = await ethers.getSigners();
+    const proxyFactory = await ethers.getContractFactory("HyraTransparentUpgradeableProxy");
     const proxy = await proxyFactory.deploy(
       await implementation.getAddress(),
+      proxyAdmin.address,
       initData,
     );
     await proxy.waitForDeployment();
@@ -45,10 +47,11 @@ describe("MultiSigRoleManager security regressions", function () {
     const implementation = await factory.deploy();
     await implementation.waitForDeployment();
 
-    const proxyFactory = await ethers.getContractFactory("ERC1967Proxy");
+    const [, proxyAdmin] = await ethers.getSigners();
+    const proxyFactory = await ethers.getContractFactory("HyraTransparentUpgradeableProxy");
     const initData = factory.interface.encodeFunctionData("initialize", [ethers.ZeroAddress]);
     await expect(
-      proxyFactory.deploy(await implementation.getAddress(), initData),
+      proxyFactory.deploy(await implementation.getAddress(), proxyAdmin.address, initData),
     ).to.be.reverted;
   });
 
