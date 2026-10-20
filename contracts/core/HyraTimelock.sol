@@ -292,16 +292,14 @@ contract HyraTimelock is Initializable, ReentrancyGuardUpgradeable, TimelockCont
         
         if (executedUpgrades[upgradeId]) revert UpgradeAlreadyExecuted();
         
-        // Validate proxyAdmin is legitimate - check if it's a known proxy admin
-        // This prevents fake proxy admin attacks
-        if (proxyAdmin == address(0)) revert InvalidProxyAdmin();
-        
-        // Check if proxy admin validator is set and validate the proxy admin
-        if (address(proxyAdminValidator) != address(0)) {
-            require(
-                proxyAdminValidator.isAuthorizedProxyAdmin(proxyAdmin),
-                "Proxy admin not authorized"
-            );
+        // Fail closed on every upgrade entry point; never bypass the validator.
+        if (address(proxyAdminValidator) == address(0)) revert InvalidProxyAdmin();
+        if (proxy.code.length == 0 || proxyAdmin.code.length == 0) {
+            revert InvalidProxyAdmin();
+        }
+        if (newImplementation.code.length == 0) revert InvalidImplementation();
+        if (!proxyAdminValidator.isAuthorizedProxyAdmin(proxyAdmin)) {
+            revert InvalidProxyAdmin();
         }
         
         // FIXED: Apply Checks-Effects-Interactions pattern
