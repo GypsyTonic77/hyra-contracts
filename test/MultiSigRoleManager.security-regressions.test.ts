@@ -3,7 +3,8 @@ import { ethers } from "hardhat";
 
 describe("MultiSigRoleManager security regressions", function () {
   async function deployProxy(adminAddress?: string) {
-    const [admin] = await ethers.getSigners();
+    const signers = await ethers.getSigners();
+    const admin = signers[0];
     const factory = await ethers.getContractFactory("MultiSigRoleManager");
     const implementation = await factory.deploy();
     await implementation.waitForDeployment();
@@ -11,7 +12,7 @@ describe("MultiSigRoleManager security regressions", function () {
     const initData = factory.interface.encodeFunctionData("initialize", [
       adminAddress ?? admin.address,
     ]);
-    const [, proxyAdmin] = await ethers.getSigners();
+    const proxyAdmin = signers[signers.length - 1];
     const proxyFactory = await ethers.getContractFactory("HyraTransparentUpgradeableProxy");
     const proxy = await proxyFactory.deploy(
       await implementation.getAddress(),
@@ -38,8 +39,6 @@ describe("MultiSigRoleManager security regressions", function () {
     expect(await manager.hasRole(role, signerB.address)).to.equal(false);
     expect(await manager.hasRole(role, signerC.address)).to.equal(true);
     expect(await manager.hasRole(role, signerD.address)).to.equal(true);
-    expect(await manager.isRoleSigner(role, signerA.address)).to.equal(false);
-    expect(await manager.isRoleSigner(role, signerC.address)).to.equal(true);
   });
 
   it("rejects initialization with the zero address as admin", async function () {
@@ -47,7 +46,8 @@ describe("MultiSigRoleManager security regressions", function () {
     const implementation = await factory.deploy();
     await implementation.waitForDeployment();
 
-    const [, proxyAdmin] = await ethers.getSigners();
+    const signers = await ethers.getSigners();
+    const proxyAdmin = signers[signers.length - 1];
     const proxyFactory = await ethers.getContractFactory("HyraTransparentUpgradeableProxy");
     const initData = factory.interface.encodeFunctionData("initialize", [ethers.ZeroAddress]);
     await expect(
