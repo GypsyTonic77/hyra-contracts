@@ -195,6 +195,46 @@ contract HyraToken is
         address _governance,
         address _privilegedMultisigWallet
     ) public initializer validAddress(_vestingContract) validAddress(_governance) {
+        _initializeToken(_name, _symbol, _initialSupply, _vestingContract, _governance, _privilegedMultisigWallet);
+    }
+
+    /**
+     * @notice Atomically configures distribution wallets and initializes the token.
+     * @dev Prevents an attacker from claiming the one-time distribution configuration
+     *      between proxy deployment and a separate initialization transaction.
+     */
+    function initializeWithDistribution(
+        string memory _name,
+        string memory _symbol,
+        uint256 _initialSupply,
+        address _vestingContract,
+        address _governance,
+        address _privilegedMultisigWallet,
+        address _communityEcosystem,
+        address _liquidityBuybackReserve,
+        address _marketingPartnerships,
+        address _teamFounders,
+        address _strategicAdvisors,
+        address _seedStrategicVC
+    ) external initializer validAddress(_vestingContract) validAddress(_governance) {
+        _setDistributionConfig(_communityEcosystem,
+            _liquidityBuybackReserve,
+            _marketingPartnerships,
+            _teamFounders,
+            _strategicAdvisors,
+            _seedStrategicVC);
+        _initializeToken(_name, _symbol, _initialSupply, _vestingContract, _governance, _privilegedMultisigWallet);
+    }
+
+    function _initializeToken(
+        string memory _name,
+        string memory _symbol,
+        uint256 _initialSupply,
+        address _vestingContract,
+        address _governance,
+        address _privilegedMultisigWallet
+    ) internal {
+
         __ERC20_init(_name, _symbol);
         __ERC20Burnable_init();
         __ERC20Permit_init(_name);
@@ -241,6 +281,7 @@ contract HyraToken is
         
         // Set privilegedMultisigWallet (chỉ set một lần trong initialize)
         privilegedMultisigWallet = _privilegedMultisigWallet;
+    
     }
     
     // Legacy initializer removed to eliminate single-holder initial distribution path
@@ -265,11 +306,25 @@ contract HyraToken is
         address _teamFounders,
         address _strategicAdvisors,
         address _seedStrategicVC
-    ) external {
-        // Allow setting config before initialization (no owner check)
-        // After initialization, only owner can call (checked via onlyOwner if needed)
-        // For now, allow anyone to set before init, but in practice should be deployer
-        // Can only set once
+    ) external onlyOwner {
+        _setDistributionConfig(_communityEcosystem,
+            _liquidityBuybackReserve,
+            _marketingPartnerships,
+            _teamFounders,
+            _strategicAdvisors,
+            _seedStrategicVC);
+    }
+
+    function _setDistributionConfig(
+        address _communityEcosystem,
+        address _liquidityBuybackReserve,
+        address _marketingPartnerships,
+        address _teamFounders,
+        address _strategicAdvisors,
+        address _seedStrategicVC
+    ) internal {
+
+        // Configuration is set during initialization or by the owner after zero-supply initialization.
         if (configSet) revert ConfigAlreadySet();
         
         // Validate all addresses are not zero
@@ -326,6 +381,7 @@ contract HyraToken is
             _strategicAdvisors,
             _seedStrategicVC
         );
+    
     }
 
     // ============ Oracle Integration Functions ============
