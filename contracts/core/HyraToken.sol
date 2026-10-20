@@ -306,7 +306,12 @@ contract HyraToken is
         address _teamFounders,
         address _strategicAdvisors,
         address _seedStrategicVC
-    ) external onlyOwner {
+    ) external {
+        // Preserve legacy pre-initialization configuration while requiring ownership
+        // for all configuration changes after the token has been initialized.
+        if (_getInitializedVersion() != 0) {
+            _checkOwner();
+        }
         _setDistributionConfig(_communityEcosystem,
             _liquidityBuybackReserve,
             _marketingPartnerships,
