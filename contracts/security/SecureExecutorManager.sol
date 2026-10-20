@@ -30,6 +30,11 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
     mapping(bytes32 => bool) public executedOperations;
     mapping(bytes32 => address) public operationExecutors;
     mapping(bytes32 => uint256) public operationTimestamps;
+
+    // Appended fields preserve existing storage slots for upgradeable deployments.
+    mapping(address => uint256) public executorUsageDay;
+    uint256 public activeExecutorCount;
+    bool private _executorCountInitialized;
     
     // ============ Events ============
     event ExecutorAdded(address indexed executor, address indexed addedBy);
@@ -83,6 +88,9 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
         _grantRole(MANAGER_ROLE, admin);
         _grantRole(EMERGENCY_ROLE, admin);
         
+        // New deployments initialize the executor count as executors are added.
+        _executorCountInitialized = true;
+
         // Add initial executors
         for (uint256 i = 0; i < initialExecutors.length; i++) {
             if (initialExecutors[i] != address(0)) {
@@ -99,6 +107,7 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
      * @param executor Address of the executor to add
      */
     function addExecutor(address executor) external onlyRole(MANAGER_ROLE) {
+        if (!_executorCountInitialized) revert InvalidParameters();
         if (executor == address(0)) revert ZeroAddress();
         _addExecutor(executor);
         emit ExecutorAdded(executor, msg.sender);
@@ -109,6 +118,7 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
      * @param executor Address of the executor to remove
      */
     function removeExecutor(address executor) external onlyRole(MANAGER_ROLE) {
+        if (!_executorCountInitialized) revert InvalidParameters();
         if (!authorizedExecutors[executor]) revert NotExecutor();
         
         // Check if removing this executor would leave insufficient executors
@@ -120,6 +130,8 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
         authorizedExecutors[executor] = false;
         delete executorLastUsed[executor];
         delete executorUsageCount[executor];
+        delete executorUsageDay[executor];
+        activeExecutorCount--;
         
         emit ExecutorRemoved(executor, msg.sender);
     }
@@ -148,27 +160,30 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
             revert ExecutorCooldownActive();
         }
         
-        // Check daily usage limit
-        if (executorUsageCount[msg.sender] >= maxExecutorsPerDay) {
+        // Reset usage at the start of each UTC day.
+        uint256 currentDay = block.timestamp / 1 days;
+        uint256 usedToday = executorUsageDay[msg.sender] == currentDay
+            ? executorUsageCount[msg.sender]
+            : 0;
+        if (usedToday >= maxExecutorsPerDay) {
             revert ExecutorLimitExceeded();
         }
         
         // Validate target
         if (target == address(0)) revert InvalidOperation();
         
-        // Mark operation as executed
-        executedOperations[operationId] = true;
-        operationExecutors[operationId] = msg.sender;
-        operationTimestamps[operationId] = block.timestamp;
-        
-        // Update executor usage
-        executorLastUsed[msg.sender] = block.timestamp;
-        executorUsageCount[msg.sender]++;
-        
-        // Execute the operation
+        // Execute first. A failed target call must not consume the operation ID
+        // or the executor's quota; nonReentrant prevents callback replay.
         (success, returnData) = target.call{value: value}(data);
-        
-        emit OperationExecuted(operationId, msg.sender, target, block.timestamp);
+        if (success) {
+            executedOperations[operationId] = true;
+            operationExecutors[operationId] = msg.sender;
+            operationTimestamps[operationId] = block.timestamp;
+            executorLastUsed[msg.sender] = block.timestamp;
+            executorUsageDay[msg.sender] = currentDay;
+            executorUsageCount[msg.sender] = usedToday + 1;
+            emit OperationExecuted(operationId, msg.sender, target, block.timestamp);
+        }
         
         return (success, returnData);
     }
@@ -192,15 +207,14 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
         // Validate target
         if (target == address(0)) revert InvalidOperation();
         
-        // Mark operation as executed
-        executedOperations[operationId] = true;
-        operationExecutors[operationId] = msg.sender;
-        operationTimestamps[operationId] = block.timestamp;
-        
-        // Execute the operation
+        // Failed emergency calls remain retryable; only record successful execution.
         (success, returnData) = target.call{value: value}(data);
-        
-        emit OperationExecuted(operationId, msg.sender, target, block.timestamp);
+        if (success) {
+            executedOperations[operationId] = true;
+            operationExecutors[operationId] = msg.sender;
+            operationTimestamps[operationId] = block.timestamp;
+            emit OperationExecuted(operationId, msg.sender, target, block.timestamp);
+        }
         
         return (success, returnData);
     }
@@ -246,13 +260,41 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
     function _addExecutor(address executor) internal {
         if (authorizedExecutors[executor]) revert AlreadyExecutor();
         authorizedExecutors[executor] = true;
+        activeExecutorCount++;
         _grantRole(EXECUTOR_ROLE, executor);
     }
-    
-    function _getExecutorCount() internal view returns (uint256 count) {
-        // This is a simplified count - in production, you might want to track this separately
-        // For now, we'll use a reasonable assumption that authorized executors are manageable
-        return 10; // Placeholder - implement proper counting if needed
+
+    /**
+     * @notice Initialize executor counting on an existing proxy after upgrading.
+     * @dev Pass every currently authorized executor exactly once. New deployments
+     *      initialize this counter automatically in initialize().
+     */
+    function initializeExecutorCount(address[] calldata currentExecutors)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        if (_executorCountInitialized) revert InvalidParameters();
+        if (currentExecutors.length == 0) revert InsufficientExecutors();
+
+        uint256 count;
+        for (uint256 i = 0; i < currentExecutors.length; i++) {
+            address executor = currentExecutors[i];
+            if (executor == address(0) || !authorizedExecutors[executor]) {
+                revert InvalidParameters();
+            }
+            for (uint256 j = 0; j < i; j++) {
+                if (currentExecutors[j] == executor) revert InvalidParameters();
+            }
+            count++;
+        }
+
+        if (count == 0) revert InsufficientExecutors();
+        activeExecutorCount = count;
+        _executorCountInitialized = true;
+    }
+
+    function _getExecutorCount() internal view returns (uint256) {
+        return activeExecutorCount;
     }
     
     // ============ View Functions ============
@@ -270,7 +312,10 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
     function canExecute(address executor) external view returns (bool) {
         if (!authorizedExecutors[executor]) return false;
         if (block.timestamp < executorLastUsed[executor] + executorCooldownPeriod) return false;
-        if (executorUsageCount[executor] >= maxExecutorsPerDay) return false;
+        uint256 usedToday = executorUsageDay[executor] == block.timestamp / 1 days
+            ? executorUsageCount[executor]
+            : 0;
+        if (usedToday >= maxExecutorsPerDay) return false;
         return true;
     }
     
@@ -285,8 +330,10 @@ contract SecureExecutorManager is Initializable, AccessControlUpgradeable, Pausa
     ) {
         authorized = authorizedExecutors[executor];
         lastUsed = executorLastUsed[executor];
-        usageCount = executorUsageCount[executor];
-        canExecuteNow = authorized && 
+        usageCount = executorUsageDay[executor] == block.timestamp / 1 days
+            ? executorUsageCount[executor]
+            : 0;
+        canExecuteNow = authorized &&
                        block.timestamp >= lastUsed + executorCooldownPeriod &&
                        usageCount < maxExecutorsPerDay;
     }
