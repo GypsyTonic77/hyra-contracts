@@ -41,8 +41,15 @@ describe("MultiSigRoleManager security regressions", function () {
   });
 
   it("rejects initialization with the zero address as admin", async function () {
-    const manager = await deployProxy(ethers.ZeroAddress);
-    expect(await manager.hasRole(await manager.DEFAULT_ADMIN_ROLE(), ethers.ZeroAddress)).to.equal(false);
+    const factory = await ethers.getContractFactory("MultiSigRoleManager");
+    const implementation = await factory.deploy();
+    await implementation.waitForDeployment();
+
+    const proxyFactory = await ethers.getContractFactory("ERC1967Proxy");
+    const initData = factory.interface.encodeFunctionData("initialize", [ethers.ZeroAddress]);
+    await expect(
+      proxyFactory.deploy(await implementation.getAddress(), initData),
+    ).to.be.reverted;
   });
 
   it("does not let a non-admin replace a role's signer set", async function () {
