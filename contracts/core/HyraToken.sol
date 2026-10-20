@@ -666,9 +666,9 @@ contract HyraToken is
     /**
      * @notice Check and reset mint year if needed
      */
-    function _getCalendarMintYear()
+    function _getMintYearForTimestamp(uint256 timestamp)
         internal
-        view
+        pure
         returns (uint256 year, uint256 yearStart)
     {
         year = 1;
@@ -681,7 +681,7 @@ contract HyraToken is
                 ((calendarYear % 100 != 0) || (calendarYear % 400 == 0));
             uint256 duration = isLeapYear ? 366 days : 365 days;
 
-            if (block.timestamp < yearStart + duration) {
+            if (timestamp < yearStart + duration) {
                 return (year, yearStart);
             }
 
@@ -689,6 +689,14 @@ contract HyraToken is
             year++;
         }
         return (TIER3_END_YEAR + 1, yearStart);
+    }
+
+    function _getCalendarMintYear()
+        internal
+        view
+        returns (uint256 year, uint256 yearStart)
+    {
+        return _getMintYearForTimestamp(block.timestamp);
     }
 
     function _checkAndResetMintYear() private {
@@ -868,10 +876,7 @@ contract HyraToken is
      * @notice Get amount minted in current year
      */
     function getMintedThisYear() external view returns (uint256) {
-        uint256 year = currentMintYear;
-        if (block.timestamp >= mintYearStartTime + YEAR_DURATION) {
-            year += (block.timestamp - mintYearStartTime) / YEAR_DURATION;
-        }
+        (uint256 year, ) = _getCalendarMintYear();
         return mintedByYear[year];
     }
 
@@ -1004,13 +1009,8 @@ contract HyraToken is
      * @param timestamp The timestamp to convert
      * @return year The year number based on contract's mintYearStartTime
      */
-    function _calculateYearFromTimestamp(uint256 timestamp) internal view returns (uint256) {
-        if (timestamp < originalMintYearStartTime) {
-            return 1; // Before contract start, assume year 1
-        }
-        
-        // Calculate which year the timestamp falls into based on original start time
-        uint256 yearsPassed = (timestamp - originalMintYearStartTime) / YEAR_DURATION;
-        return 1 + yearsPassed; // Year 1 + years passed
+    function _calculateYearFromTimestamp(uint256 timestamp) internal pure returns (uint256) {
+        (uint256 year, ) = _getMintYearForTimestamp(timestamp);
+        return year;
     }
 }
