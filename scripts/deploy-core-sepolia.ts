@@ -42,8 +42,8 @@ async function main() {
 
 	const safeAddress = process.env.SAFE_ADDRESS || await deployer.getAddress();
 
-	// 3.1) Set Distribution Config BEFORE initialize
-	console.log(`\n=== Setting Distribution Configuration ===`);
+	// Validate distribution configuration before atomic token initialization
+	console.log(`\n=== Validating Distribution Configuration ===`);
 	const addresses = {
 		communityEcosystem: process.env.COMMUNITY_ECOSYSTEM_WALLET,
 		liquidityBuybackReserve: process.env.LIQUIDITY_BUYBACK_RESERVE_WALLET,
@@ -53,61 +53,25 @@ async function main() {
 		seedStrategicVC: process.env.SEED_STRATEGIC_VC_WALLET,
 	};
 
-	// Validate all addresses are set
 	const missing = Object.entries(addresses)
-		.filter(([_, address]) => !address || address === "0x0000000000000000000000000000000000000000")
+		.filter(([_, address]) => !address || address === ethers.ZeroAddress)
 		.map(([key]) => key);
-
 	if (missing.length > 0) {
 		throw new Error(`Missing wallet addresses in ${envFile}: ${missing.join(", ")}`);
 	}
 
-	// Validate addresses format
+	const addressList = Object.values(addresses) as string[];
 	for (const [key, address] of Object.entries(addresses)) {
-		if (!ethers.isAddress(address!)) {
-			throw new Error(`Invalid address for ${key}: ${address}`);
+		if (!ethers.isAddress(address!)) throw new Error(`Invalid address for ${key}: ${address}`);
+		if ((await ethers.provider.getCode(address!)) === "0x") {
+			throw new Error(`${key} (${address}) is not a deployed contract/multisig wallet.`);
 		}
 	}
-
-	// Check for duplicates
-	const addressList = Object.values(addresses) as string[];
-	const uniqueAddresses = new Set(addressList);
-	if (uniqueAddresses.size !== addressList.length) {
+	if (new Set(addressList.map(a => a.toLowerCase())).size !== addressList.length) {
 		throw new Error("Duplicate addresses found in configuration");
 	}
 
-	console.log(`   Community & Ecosystem (60%): ${addresses.communityEcosystem}`);
-	console.log(`   Liquidity, Buyback & Reserve (12%): ${addresses.liquidityBuybackReserve}`);
-	console.log(`   Marketing & Partnerships (10%): ${addresses.marketingPartnerships}`);
-	console.log(`   Team & Founders (8%): ${addresses.teamFounders}`);
-	console.log(`   Strategic Advisors (5%): ${addresses.strategicAdvisors}`);
-	console.log(`   Seed & Strategic VC (5%): ${addresses.seedStrategicVC}`);
-
-	// Verify addresses are contracts (multisig wallets)
-	console.log(`\n   Verifying addresses are contracts...`);
-	for (const [key, address] of Object.entries(addresses)) {
-		const code = await ethers.provider.getCode(address!);
-		if (code === "0x") {
-			throw new Error(`${key} (${address}) is not a contract. All addresses must be multisig wallets.`);
-		}
-		console.log(`   ✅ ${key}: Contract verified`);
-	}
-
-	// Set distribution config
-	console.log(`\n   Setting distribution config...`);
-	await (
-		await token.setDistributionConfig(
-			addresses.communityEcosystem!,
-			addresses.liquidityBuybackReserve!,
-			addresses.marketingPartnerships!,
-			addresses.teamFounders!,
-			addresses.strategicAdvisors!,
-			addresses.seedStrategicVC!
-		)
-	).wait();
-	console.log(`   ✅ Distribution config set (immutable)`);
-
-	// 3.2) Initialize token - will auto-distribute to 6 wallets
+	// 3.2) Atomically configure distribution and initialize token
 	const INITIAL_SUPPLY_MAX = ethers.parseEther("2500000000"); // 2.5 billion
 	console.log(`\n=== Initializing Token ===`);
 	console.log(`   Initial Supply: 2.5B tokens (MAX - 5% of total supply)`);
@@ -124,13 +88,19 @@ async function main() {
 	}
 
 	await (
-		await token.initialize(
+		await token.initializeWithDistribution(
 			"HYRA",
 			"HYRA",
 			INITIAL_SUPPLY_MAX,
-			await vesting.getAddress(),  // vesting contract (not used when distributing)
+			await vesting.getAddress(),
 			await timelock.getAddress(),
-			privilegedMultisigWallet
+			privilegedMultisigWallet,
+			addresses.communityEcosystem!,
+			addresses.liquidityBuybackReserve!,
+			addresses.marketingPartnerships!,
+			addresses.teamFounders!,
+			addresses.strategicAdvisors!,
+			addresses.seedStrategicVC!
 		)
 	).wait();
 	console.log(`✅ HyraToken initialized - 2.5B HYRA distributed to 6 multisig wallets`);
