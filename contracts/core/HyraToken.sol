@@ -666,14 +666,36 @@ contract HyraToken is
     /**
      * @notice Check and reset mint year if needed
      */
+    function _getCalendarMintYear()
+        internal
+        view
+        returns (uint256 year, uint256 yearStart)
+    {
+        year = 1;
+        yearStart = YEAR_2025_START;
+
+        // Resolve real UTC calendar-year boundaries, including Gregorian leap years.
+        while (year <= TIER3_END_YEAR) {
+            uint256 calendarYear = 2024 + year;
+            bool isLeapYear = (calendarYear % 4 == 0) &&
+                ((calendarYear % 100 != 0) || (calendarYear % 400 == 0));
+            uint256 duration = isLeapYear ? 366 days : 365 days;
+
+            if (block.timestamp < yearStart + duration) {
+                return (year, yearStart);
+            }
+
+            yearStart += duration;
+            year++;
+        }
+        return (TIER3_END_YEAR + 1, yearStart);
+    }
+
     function _checkAndResetMintYear() private {
-        if (block.timestamp >= mintYearStartTime + YEAR_DURATION) {
-            // Calculate how many years have passed
-            uint256 yearsPassed = (block.timestamp - mintYearStartTime) / YEAR_DURATION;
-            
-            currentMintYear += yearsPassed;
-            mintYearStartTime += yearsPassed * YEAR_DURATION;
-            
+        (uint256 calendarYear, uint256 calendarYearStart) = _getCalendarMintYear();
+        if (currentMintYear != calendarYear || mintYearStartTime != calendarYearStart) {
+            currentMintYear = calendarYear;
+            mintYearStartTime = calendarYearStart;
             emit MintYearReset(currentMintYear, block.timestamp);
         }
     }
@@ -725,10 +747,7 @@ contract HyraToken is
      */
     function getRemainingMintCapacity() external view returns (uint256) {
         // Check if minting period has ended
-        uint256 year = currentMintYear;
-        if (block.timestamp >= mintYearStartTime + YEAR_DURATION) {
-            year += (block.timestamp - mintYearStartTime) / YEAR_DURATION;
-        }
+        (uint256 year, ) = _getCalendarMintYear();
         
         if (year > TIER3_END_YEAR) {
             return 0; // Minting period ended
@@ -831,10 +850,7 @@ contract HyraToken is
      * @return tier Current tier (1, 2, 3, or 0 if ended)
      */
     function getCurrentMintTier() external view returns (uint256 tier) {
-        uint256 year = currentMintYear;
-        if (block.timestamp >= mintYearStartTime + YEAR_DURATION) {
-            year += (block.timestamp - mintYearStartTime) / YEAR_DURATION;
-        }
+        (uint256 year, ) = _getCalendarMintYear();
         
         // FIXED: Use range checks instead of strict equality
         if (year < 1 || year > TIER3_END_YEAR) {
@@ -864,9 +880,13 @@ contract HyraToken is
      * @return Seconds until mint year resets
      */
     function getTimeUntilNextMintYear() external view returns (uint256) {
-        uint256 nextYearTime = mintYearStartTime + YEAR_DURATION;
-        return nextYearTime > block.timestamp ? 
-            nextYearTime - block.timestamp : 0;
+        (uint256 year, uint256 yearStart) = _getCalendarMintYear();
+        if (year > TIER3_END_YEAR) return 0;
+        uint256 calendarYear = 2024 + year;
+        bool isLeapYear = (calendarYear % 4 == 0) &&
+            ((calendarYear % 100 != 0) || (calendarYear % 400 == 0));
+        uint256 nextYearTime = yearStart + (isLeapYear ? 366 days : 365 days);
+        return nextYearTime > block.timestamp ? nextYearTime - block.timestamp : 0;
     }
 
     /**
