@@ -21,3 +21,7 @@ ignition/deployments/chain-31337
 
 /security-tools
 /security-env
+# Ensure local environment secrets are not tracked
+.env
+.env.*
+!.env.example
