@@ -83,6 +83,7 @@ contract MultiSigRoleManager is Initializable, AccessControlUpgradeable, Reentra
      * @param admin Initial admin address
      */
     function initialize(address admin) public initializer {
+        if (admin == address(0)) revert InvalidSigner(admin);
         __AccessControl_init();
         __ReentrancyGuard_init();
         
@@ -119,9 +120,13 @@ contract MultiSigRoleManager is Initializable, AccessControlUpgradeable, Reentra
         config.requiredSignatures = requiredSignatures;
         config.totalSigners = signers.length;
         
-        // Clear existing signers
+        // Remove the previous configured signers from both tracking and AccessControl.
+        // Clearing only config.signers is insufficient: AccessControl keeps its own role map.
         for (uint256 i = 0; i < config.signerList.length; i++) {
-            config.signers[config.signerList[i]] = false;
+            address oldSigner = config.signerList[i];
+            config.signers[oldSigner] = false;
+            _revokeRole(role, oldSigner);
+            emit SignerRemoved(role, oldSigner);
         }
         delete config.signerList;
         
